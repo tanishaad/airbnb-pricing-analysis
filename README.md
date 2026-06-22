@@ -139,9 +139,9 @@ install.packages(c("tidyverse", "knitr", "rpart", "rpart.plot", "randomForest"))
 
 ## Project Files
 
-- [Final Report PDF](PSTAT-135-Final-Project.pdf)  
+- [Final Report PDF](airbnb_pricing_analysis.pdf)  
   *Note: If GitHub does not render the PDF preview, download the file to view the full report.*
-- [R Markdown Source Code](PSTAT-135-Final-Project.Rmd)
+- [R Markdown Source Code](airbnb_pricing_analysis.Rmd)
 
 ## Future Improvements
 
