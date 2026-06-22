@@ -4,4 +4,4 @@ Analyzed Airbnb listing data to identify pricing drivers across NYC neighborhood
 ## Project Files
 - [Final Report PDF](PSTAT-135-Final-Project.pdf)  
   *Note: If GitHub does not render the PDF preview, download the file to view the full report.*
-- [R Markdown Source Code](PSTAT 135 Final Project.Rmd)
+- [R Markdown Source Code](PSTAT-135-Final-Project.Rmd)
