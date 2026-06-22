@@ -1,0 +1,1371 @@
+---
+title: "Analysis of Airbnb Pricing Patterns in New York"
+author: "Tanisha Dutta - tdutta@ucsb.edu"
+date: "2026-06-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 6,
+  fig.height = 3.5
+  )
+```
+
+# Abstract
+
+Airbnb prices can vary widely across listings, even within the same city. Some listings are priced much higher because they offer more space, are located in popular neighborhoods, or provide an entire private place instead of a shared room. In this project, I studied Airbnb listing prices in New York using exploratory data analysis and statistical learning methods.
+
+The goal of the project was to understand which listing characteristics are most related to price and to build models that can predict listing price using available listing information. For my analysis, I used Airbnb listing data from Kaggle and focused on New York listings to avoid comparing prices across cities with different local currencies. After cleaning the data, I examined pricing patterns by room type, property type, neighborhood, number of bedrooms, and number of guests accommodated. Then, I applied supervised learning methods to predict listing price using these features.
+
+My results show that Airbnb prices in New York are closely related to listing size, room type, and location. Listings with more bedrooms or higher guest capacity tend to have higher prices, and entire places are much more expensive than private or shared rooms. Several Manhattan neighborhoods also have higher median prices than other areas. Overall, my project shows that Airbnb pricing is influenced by a combination of listing characteristics and the neighborhood.
+
+# 1. Introduction
+
+Airbnb has become a major part of the short-term rental market in cities around the world. In a city like New York, listings differ so much that prices are not uniform. A small private room in one neighborhood are often much cheaper than an entire apartment in another area, even if both listings are in the same city.
+
+I wanted to use this dataset to study what factors are most related to Airbnb listing prices in New York. Last summer, when I interned in New York, I was having a difficult time finding an affordable Airbnb in Midtown, which is where my office was, but I found several properties in Brooklyn and in the outskirts, which made me curious about this topic. The main question I focus on is: which listing characteristics help explain Airbnb price, and how accurately can price be predicted using statistical learning methods?
+
+The dataset includes listing features such as room type, property type, neighborhood, number of bedrooms, number of guests accommodated, booking rules, and host information. These variables make it possible to look at which features matter the most instead of only asking whether a model can predict price.
+
+Past studies of Airbnb and short-term rental markets have been conducted and have often focused on pricing, location, reviews, and host/listing characteristics. This project follows a similar idea by using statistical learning to study Airbnb pricing patterns but specifically in New York.
+
+This report is structured for readability, so I only included the most essential plots and graphs in the 9-page report and included an appendix beginning Page 10 with the entire rest of my code and outputs shown. The methods I used in this project include exploratory data analysis and supervised learning. First, I examined the distribution of prices and compared median prices across room types, property types, neighborhoods, number of bedrooms, and guest capacity. Then, I used regression models to predict listing price. Since the price variable is right-skewed, I used the logarithm of price for modeling while keeping the original price variable for easier interpretation in graphs and summaries.
+
+One important discovery from the early data exploration was that the original dataset included multiple cities, but the prices did not appear to be recorded in one common currency. Because comparing raw prices across cities could be misleading, I limited the final analysis to New York listings. Within the New York data, the main patterns showed that price increases with listing size and capacity, and that room type and neighborhood are also strongly related to price. These findings provide a clear basis for the prediction models used later in the project.
+
+```{r, echo=FALSE, include=FALSE}
+library(tidyverse)
+
+# load data
+listings <- read.csv("~/Downloads/Listings.csv")
+
+# explore data
+dim(listings)
+names(listings)
+head(listings)
+```
+
+```{r, echo=FALSE, include=FALSE}
+# check missing values by column
+missing_summary <- listings %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "missing_count") %>%
+  arrange(desc(missing_count))
+missing_summary
+
+# convert variables
+airbnb_explore <- listings %>%
+  mutate(
+    # remove symbols if any
+    price = as.numeric(gsub("[$,]", "", price)),
+    # convert rates to percentages
+    host_response_rate = as.numeric(gsub("%", "", host_response_rate)),
+    host_acceptance_rate = as.numeric(gsub("%", "", host_acceptance_rate)),
+    # convert to date if not already
+    host_since = as.Date(host_since),
+    # new column to calculate how many years host has been a host
+    host_years = as.numeric(difftime(Sys.Date(), host_since, units = "days")) / 365,
+    # convert categorical variables to factors
+    city = as.factor(city),
+    neighbourhood = as.factor(neighbourhood),
+    property_type = as.factor(property_type),
+    room_type = as.factor(room_type),
+    # convert yes/no variables to factors
+    host_is_superhost = as.factor(host_is_superhost),
+    host_identity_verified = as.factor(host_identity_verified),
+    host_has_profile_pic = as.factor(host_has_profile_pic),
+    instant_bookable = as.factor(instant_bookable)
+  )
+```
+
+```{r, echo=FALSE, include=FALSE}
+# price distribution exploration
+
+# clean price variable (remove symbols if any)
+airbnb_explore <- listings %>%
+  mutate(
+    price = as.numeric(gsub("[$,]", "", price))
+  )
+
+dim(airbnb_explore)
+summary(airbnb_explore$price)
+
+# check price distribution by city
+price_by_city <- airbnb_explore %>%
+  filter(!is.na(price), price > 0) %>%
+  group_by(city) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price),
+    min_price = min(price),
+    max_price = max(price)
+  ) %>%
+  arrange(desc(median_price))
+price_by_city
+
+# plot price distribution by city
+price_by_city %>%
+  ggplot(aes(x = reorder(city, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Median Airbnb Listing Price by City Before Currency Adjustment",
+    x = "City",
+    y = "Median Listed Price"
+  )
+```
+
+```{r, echo=FALSE, include=FALSE}
+# filter to only New York listings
+airbnb_ny <- airbnb_explore %>%
+  filter(city == "New York")
+
+dim(airbnb_ny)
+summary(airbnb_ny$price)
+```
+
+```{r, echo=FALSE, include=FALSE}
+# clean dataset  
+airbnb_ny_clean <- airbnb_ny %>%
+  mutate(
+    # convert rates to percentages
+    host_response_rate = as.numeric(gsub("%", "", host_response_rate)),
+    host_acceptance_rate = as.numeric(gsub("%", "", host_acceptance_rate)),
+    # convert to date if not already
+    host_since = as.Date(host_since),
+    # new column to calculate how many years host has been a host
+    host_years = as.numeric(difftime(Sys.Date(), host_since, units = "days")) / 365,
+    # convert categorical variables to factors
+    city = as.factor(city),
+    neighbourhood = as.factor(neighbourhood),
+    property_type = as.factor(property_type),
+    room_type = as.factor(room_type),
+    # convert yes/no variables to factors
+    host_is_superhost = as.factor(host_is_superhost),
+    host_has_profile_pic = as.factor(host_has_profile_pic),
+    host_identity_verified = as.factor(host_identity_verified),
+    host_has_profile_pic = as.factor(host_identity_verified),
+    instant_bookable = as.factor(instant_bookable)
+  ) %>%
+  filter(
+    !is.na(price),
+    price >= 10,
+    price <= quantile(price, 0.99, na.rm = TRUE),
+    !is.na(room_type),
+    !is.na(property_type),
+    !is.na(accommodates),
+    !is.na(bedrooms),
+    !is.na(minimum_nights),
+    !is.na(maximum_nights),
+    !is.na(latitude),
+    !is.na(longitude),
+    !is.na(host_total_listings_count)
+  )
+
+# make a log-price variable (since price is skewed right)
+airbnb_ny_clean <- airbnb_ny_clean %>%
+  mutate(log_price = log(price))
+
+summary(airbnb_ny_clean$log_price)
+```
+
+```{r, echo=FALSE, include=FALSE}
+# check how many categories each factor has
+airbnb_ny_clean %>%
+  summarise(
+    neighbourhoods = n_distinct(neighbourhood),
+    property_types = n_distinct(property_type),
+    room_types = n_distinct(room_type)
+  )
+
+# explore categories for each factor
+airbnb_ny_clean %>%
+  count(room_type, sort = TRUE)
+
+airbnb_ny_clean %>%
+  count(neighbourhood, sort = TRUE) %>%
+  head(20)
+
+airbnb_ny_clean %>%
+  count(property_type, sort = TRUE) %>%
+  head(15)
+
+# only keep most common property types and neighborhoods
+top_property_types <- airbnb_ny_clean %>%
+  count(property_type, sort = TRUE) %>%
+  slice_head(n = 15) %>%
+  pull(property_type)
+
+top_neighbourhoods <- airbnb_ny_clean %>%
+  count(neighbourhood, sort = TRUE) %>%
+  slice_head(n = 50) %>%
+  pull(neighbourhood)
+
+airbnb_ny_clean <- airbnb_ny_clean %>%
+  mutate(
+    property_type_simplified = ifelse(
+      property_type %in% top_property_types,
+      as.character(property_type),
+      "Other"
+    ),
+    
+    neighbourhood_simplified = ifelse(
+      neighbourhood %in% top_neighbourhoods,
+      as.character(neighbourhood),
+      "Other"
+    ),
+    
+    property_type_simplified = as.factor(property_type_simplified),
+    neighbourhood_simplified = as.factor(neighbourhood_simplified)
+  )
+```
+
+```{r, echo=FALSE, include=FALSE}
+# final modeling data
+airbnb_ny_final <- airbnb_ny_clean %>%
+  select(
+    price,
+    city,
+    neighbourhood_simplified,
+    property_type_simplified,
+    room_type,
+    accommodates,
+    bedrooms,
+    minimum_nights,
+    maximum_nights,
+    host_total_listings_count,
+    host_is_superhost,
+    host_identity_verified,
+    instant_bookable,
+    latitude,
+    longitude
+  ) %>%
+  drop_na() %>%
+  mutate(
+    log_price = log(price)
+  )
+
+dim(airbnb_ny_final)
+
+summary(airbnb_ny_final$price)
+summary(airbnb_ny_final$log_price)
+```
+
+# 2. Data
+
+For this project, I used the Airbnb Listings dataset from Kaggle. The dataset contains listing-level information for Airbnb rentals across multiple major cities. The original dataset contained 279,712 listings and 33 variables. Each row represents one Airbnb listing, and the columns describe features such as listing name, host information, location, property type, room type, price, minimum nights, maximum nights, review scores, and booking options.
+
+The dataset was downloaded from Kaggle:
+`https://www.kaggle.com/datasets/ulrikthygepedersen/airbnb-listings/data`
+
+During the initial exploration, I found that the dataset included listings from 10 cities: Paris, New York, Sydney, Rome, Rio de Janeiro, Istanbul, Mexico City, Bangkok, Cape Town, and Hong Kong. At first, I considered using all cities together. However, when I compared median prices by city, the results did not appear directly comparable.
+
+```{r}
+# price distribution by city
+price_by_city <- airbnb_explore %>%
+  filter(!is.na(price), price > 0) %>%
+  group_by(city) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price),
+    min_price = min(price),
+    max_price = max(price)
+  ) %>%
+  arrange(desc(median_price))
+
+price_by_city %>%
+  ggplot(aes(x = reorder(city, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Median Airbnb Listing Price by City Before Currency Adjustment",
+    x = "City",
+    y = "Median Listed Price"
+  )
+```
+
+The figure above shows the median listed price by city before any currency adjustment. Cities such as Bangkok, Cape Town, and Mexico City had much higher numerical median prices than cities such as New York, Paris, and Rome. This pattern shows that the price variable may have been recorded in each city’s local currency rather than converted into one common currency. Since this project focuses on predicting and interpreting listing price, comparing raw prices across cities could have led to misleading conclusions.
+
+For this reason, I restricted the final analysis to New York listings only. This allowed the project to focus on pricing patterns within a single city, where the listed prices were more directly comparable. New York was also a good choice because it had one of the largest sample sizes in the dataset and included a wide range of neighborhoods, room types, and property types.
+
+```{r, echo=FALSE}
+library(knitr)
+
+data_summary <- data.frame(
+  Dataset_Stage = c(
+    "Original Airbnb dataset",
+    "New York subset before cleaning",
+    "Final modeling dataset"
+    ),
+  Listings = c(279712, 37012, 33044),
+  Variables = c(33, 33, 16)
+  )
+
+kable( data_summary,
+       caption = "Table 1. Dataset size before and after cleaning",
+       col.names = c("Dataset Stage", "Number of Listings", "Number of Variables") )
+```
+
+The New York subset contained 37,012 listings and 33 variables before cleaning. Before modeling, I cleaned and preprocessed the data. I removed listings with missing prices, prices below \$10, and extreme high prices above the 99th percentile to remove unrealistic or highly unusual listings that could strongly affect the model. After cleaning, the price variable ranged from \$10 to \$850, with a median price of \$95 and a mean price of \$125.30. Since the mean was still higher than the median, the price distribution was slightly right-skewed. Due to this, I used the logarithm of price as the main response variable for the regression models, while keeping the original price variable for descriptive summaries and visualizations.
+
+The New York data originally included 220 neighborhoods, 72 property types, and 4 room types. Since neighborhood and property type had many categories, I simplified these variables before modeling. The most common neighborhoods and property types were kept as separate categories, while less frequent categories were grouped into an “Other” category. This made the modeling process easier to interpret and helped avoid creating too many sparse categories. After selecting the final variables and removing incomplete rows, the final modeling dataset contained 33,044 listings and 16 variables.
+
+The response variable in this project is listing price, represented by both the original `price` variable and the transformed `log_price` variable. The main predictor variables include room type, simplified property type, simplified neighborhood, number of guests accommodated, number of bedrooms, minimum nights, maximum nights, host listing count, host verification status, instant booking status, and geographic coordinates. I mainly chose to study this dataset to understand which Airbnb listing characteristics are most related to price and to evaluate how well statistical learning models can predict listing prices in New York.
+
+# 3. Methodology
+
+In this project, I used exploratory data analysis and supervised learning methods to study Airbnb listing prices in New York. I start by cleaning the data cleaning producing descriptive summaries, followed by predictive modeling using three supervised learning methods: multiple linear regression, regression tree, and random forest regression.
+
+## 3.1 Data Preprocessing
+
+The original dataset contained listings from multiple cities, but the final analysis was restricted to New York listings. I made this decision because the price variable appeared to be recorded in local currencies rather than a single standardized currency. Restricting the analysis to one city made the price values more comparable and allowed the project to focus on within-city pricing patterns.
+
+I cleaned the data by removing listings with missing values in the variables used for modeling. I removed prices below \$10 because they were likely unrealistic or not meaningful for an Airbnb listing. I also removed prices above the 99th percentile to reduce the influence of extreme outliers. The final cleaned price range was \$10 to \$850.
+
+The original price distribution was right-skewed, meaning that most listings were concentrated at lower prices while a smaller number of expensive listings pulled the distribution to the right. Because of this, I used the logarithm of price as the response variable in the regression models to make them more stable.
+
+I also simplified igh-cardinality categorical variables (factors with many categories). I kept the most common property types and neighborhoods as their own categories and grouped the rest into an “Other” category. This reduced the number of sparse categories and made the models easier to interpret.
+
+Finally, I split the cleaned data into training and test sets. The training set contained 80% of the data and was used to fit the models. The test set contained the remaining 20% and was used to evaluate prediction performance on listings that were not used during training.
+
+## 3.2 Exploratory Data Analysis
+
+Exploratory data analysis helped understand the main pricing patterns before fitting the models. I examined the distribution of price and log price, then compared median prices across room type, property type, neighborhood, number of bedrooms, and number of guests accommodated. These summaries helped identify which variables appeared most strongly related to Airbnb price.
+
+The exploratory analysis used histograms, bar charts, and line plots. My goal was not only to describe the data, but also to provide context for the supervised learning models. If certain variables showed strong differences in median price during exploration, I assumed they would be useful predictors in the models.
+
+## 3.3 Multiple Linear Regression
+
+The first supervised learning model I tried was multiple linear regression. I used this as an interpretable baseline model for predicting log price. The model predicts log price as a linear combination of listing, host, and location characteristics. The general mathematical form of the model is:
+
+$$
+\log(\text{price}) = \beta_0 + \beta_1X_1 + \beta_2X_2 + \cdots + \beta_pX_p + \epsilon
+$$
+where $(X_1, X_2, \ldots, X_p)$ represent the predictor variables, including room type, property type, neighborhood, accommodates, bedrooms, booking rules, host characteristics, latitude, and longitude.
+
+The linear regression model is useful because the estimated coefficients show the direction and approximate size of the relationship between each predictor and log price, while holding the other variables constant. However, I know that linear regression may not fully capture nonlinear relationships or complex interactions between features, so I moved on to other models.
+
+## 3.4 Regression Tree
+
+The second supervised learning model I tried was a regression tree. A regression tree predicts a continuous response variable by recursively splitting the data into smaller groups. At each split, the model chooses a variable and split point that reduces prediction error within the resulting groups.
+
+The regression tree used the same response variable and predictors as the linear regression model. The response variable was log price, and the predictors included neighborhood, property type, room type, accommodates, bedrooms, booking restrictions, host characteristics, and geographic coordinates.
+
+I tried a regression tree since it provides a simple rule-based structure for understanding pricing patterns. For example, the tree can show whether property type, room type, bedrooms, or neighborhood creates major differences in predicted price. However, I also know that a single tree can be sensitive to the training data and may not always provide the best prediction accuracy, and the results were not strong, so I also tried random forests.
+
+## 3.5 Random Forest Regression
+
+The third supervised learning model I tried was random forest regression. A random forest is an ensemble method that builds many regression trees and averages their predictions. Unlike a single regression tree, which depends on one tree structure, a random forest combines many trees to improve prediction accuracy and reduce overfitting.
+
+For this project, the random forest used 100 trees and considered 4 randomly selected variables at each split for ease of time. It used the same response variable and predictors as the linear regression and regression tree models. I tried random forests to capture nonlinear relationships and interactions between variables more flexibly than the other two models. Although random forests are usually less directly interpretable than linear regression or a single tree, they provide variable importance measures. These measures helped me identify which predictors contribute most to prediction accuracy.
+
+## 3.6 Model Evaluation
+
+All three models were evaluated on the same test set. Model performance was measured using root mean squared error, mean absolute error, and (R^2). RMSE measures the typical size of prediction errors and gives more weight to large errors. MAE measures the average absolute difference between predicted and actual prices and is easier to interpret on the original dollar scale. (R^2) measures the proportion of variation in log price explained by the model.
+
+Because the models were trained on log price, I first calculated RMSE, MAE, and (R^2) on the log-price scale, then converted predicted log prices back to the original price scale so that RMSE and MAE could also be interpreted in dollars.
+
+```{r, echo=FALSE, include=FALSE}
+# price vs. number of guests the listing accomodates
+accommodates_price <- airbnb_ny_final %>%
+  group_by(accommodates) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  filter(count >= 50)
+accommodates_price
+
+# plot
+accommodates_price %>%
+  ggplot(aes(x = accommodates, y = median_price)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Median Airbnb Price by Number of Guests Accommodated",
+    x = "Number of Guests Accommodated",
+    y = "Median Price"
+  )
+```
+
+# 4. Results
+
+## 4.1 Exploratory Data Analysis
+
+After cleaning the New York Airbnb listings data, my final modeling dataset contained 33,044 listings and 16 variables. The cleaned price variable ranged from \$10 to \$850, with a median of \$95 and a mean of \$125.30. Since the mean was higher than the median, the price distribution was still right-skewed. Due to this, I used the original price variable for descriptive summaries and the logarithm of price as the response variable for modeling.
+
+```{r, echo=FALSE, fig.show='hold', out.width='49%', fig.width=5, fig.height=3.2}
+# log pricing distribution
+ggplot(airbnb_ny_final, aes(x = log_price)) +
+  geom_histogram(bins = 50) +
+  labs(
+    title = "Distribution of Log Airbnb Listing Prices in New York",
+    x = "Log Price",
+    y = "Number of Listings"
+  )
+
+# median price by room type
+room_type_price <- airbnb_ny_final %>%
+  group_by(room_type) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  arrange(desc(median_price))
+
+room_type_price %>%
+  ggplot(aes(x = reorder(room_type, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Median Airbnb Price by Room Type",
+    x = "Room Type",
+    y = "Median Price"
+  )
+```
+
+The two figures above show the distribution of log prices and the median price by room type. The log-transformed price variable is more balanced than the original price variable, which supports using log price for modeling. Room type was also strongly related to price. Hotel rooms had the highest median price at \$156, followed closely by entire places at \$149. Private rooms had a much lower median price of \$60, while shared rooms had the lowest median price of \$45. This suggests that guests pay more for privacy and full access to a listing.
+
+A similar pattern appeared when comparing price by number of bedrooms. One-bedroom listings were the most common and had a median price of \$80. As the number of bedrooms increased, the median price also increased. Two-bedroom listings had a median price of \$150, three-bedroom listings had a median price of \$200, four-bedroom listings had a median price of \$254, and five-bedroom listings had a median price of \$373. This shows that listing size is strongly related to price.
+
+```{r, echo=FALSE, fig.show='hold', out.width='49%', fig.width=5, fig.height=3.2}
+# price vs. number of bedrooms
+bedrooms_price <- airbnb_ny_final %>%
+  group_by(bedrooms) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  filter(count >= 50)
+
+bedrooms_price %>%
+  ggplot(aes(x = bedrooms, y = median_price)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Median Airbnb Price by Number of Bedrooms",
+    x = "Number of Bedrooms",
+    y = "Median Price"
+  )
+
+# top neighbourhoods with most listings
+top_neighbourhood_counts <- airbnb_ny_final %>%
+  count(neighbourhood_simplified, sort = TRUE) %>%
+  filter(neighbourhood_simplified != "Other") %>%
+  head(15)
+
+# median price by neighbourhoods (out of the top neighbourhoods)
+neighbourhood_price <- airbnb_ny_final %>%
+  filter(neighbourhood_simplified != "Other") %>%
+  group_by(neighbourhood_simplified) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  filter(count >= 100) %>%
+  arrange(desc(median_price))
+
+neighbourhood_price %>%
+  head(15) %>%
+  ggplot(aes(x = reorder(neighbourhood_simplified, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top Neighborhoods by Median Airbnb Price",
+    x = "Neighborhood",
+    y = "Median Price"
+  )
+```
+
+The two figures above show that listing size and neighborhood were also important pricing factors. Median price generally increased as the number of bedrooms increased. One-bedroom listings had a median price of \$80, while two-bedroom listings had a median price of \$150, three-bedroom listings had a median price of \$200, and five-bedroom listings had a median price of \$373. Neighborhood differences were also clear. Greenwich Village, Murray Hill, West Village, Theater District, SoHo, Midtown, Chelsea, and Hell’s Kitchen were among the neighborhoods with the highest median prices. These areas are generally central or high-demand neighborhoods, which helps explain their higher prices.
+
+Overall, the exploratory analysis suggests that Airbnb price is closely related to room type, listing size, and location. Entire or hotel-style listings, larger listings, and listings in central neighborhoods tended to have higher median prices. These patterns provide a strong basis for the supervised learning models.
+
+```{r, echo=FALSE, include=FALSE}
+# split data into training and test sets
+set.seed(123)
+
+train_index <- sample(
+  1:nrow(airbnb_ny_final),
+  size = 0.8 * nrow(airbnb_ny_final)
+)
+
+train_data <- airbnb_ny_final[train_index, ]
+test_data <- airbnb_ny_final[-train_index, ]
+
+dim(train_data)
+dim(test_data)
+```
+
+```{r, echo=FALSE, include=FALSE}
+# linear regression model
+
+# fit model
+lm_model <- lm(
+  log_price ~ neighbourhood_simplified + property_type_simplified +
+    room_type + accommodates + bedrooms + minimum_nights +
+    maximum_nights + host_total_listings_count +
+    host_is_superhost + host_identity_verified +
+    instant_bookable + latitude + longitude,
+  data = train_data
+)
+summary(lm_model)
+
+# predict on test data
+lm_pred_log <- predict(lm_model, newdata = test_data)
+
+# convert log price back to price
+lm_pred_price <- exp(lm_pred_log)
+actual_price <- test_data$price
+actual_log_price <- test_data$log_price
+```
+
+```{r, echo=FALSE, include=FALSE}
+# evaluation metrics for linear regression model
+lm_rmse_log <- sqrt(mean((actual_log_price - lm_pred_log)^2))
+lm_mae_log <- mean(abs(actual_log_price - lm_pred_log))
+
+lm_rmse_price <- sqrt(mean((actual_price - lm_pred_price)^2))
+lm_mae_price <- mean(abs(actual_price - lm_pred_price))
+
+lm_r2 <- 1 - sum((actual_log_price - lm_pred_log)^2) /
+  sum((actual_log_price - mean(actual_log_price))^2)
+
+lm_results <- data.frame(
+  Model = "Linear Regression",
+  RMSE_Log = lm_rmse_log,
+  MAE_Log = lm_mae_log,
+  RMSE_Price = lm_rmse_price,
+  MAE_Price = lm_mae_price,
+  R_Squared = lm_r2
+)
+lm_results
+```
+
+```{r, echo=FALSE, include=FALSE}
+library(rpart)
+library(rpart.plot)
+
+# regression tree
+# fit
+tree_model <- rpart(
+  log_price ~ neighbourhood_simplified + property_type_simplified +
+    room_type + accommodates + bedrooms + minimum_nights +
+    maximum_nights + host_total_listings_count +
+    host_is_superhost + host_identity_verified +
+    instant_bookable + latitude + longitude,
+  data = train_data,
+  method = "anova"
+)
+tree_model
+```
+
+```{r, echo=FALSE, include=FALSE}
+# predict
+tree_pred_log <- predict(tree_model, newdata = test_data)
+tree_pred_price <- exp(tree_pred_log)
+
+# evaluate
+tree_rmse_log <- sqrt(mean((actual_log_price - tree_pred_log)^2))
+tree_mae_log <- mean(abs(actual_log_price - tree_pred_log))
+
+tree_rmse_price <- sqrt(mean((actual_price - tree_pred_price)^2))
+tree_mae_price <- mean(abs(actual_price - tree_pred_price))
+
+tree_r2 <- 1 - sum((actual_log_price - tree_pred_log)^2) /
+  sum((actual_log_price - mean(actual_log_price))^2)
+
+tree_results <- data.frame(
+  Model = "Regression Tree",
+  RMSE_Log = tree_rmse_log,
+  MAE_Log = tree_mae_log,
+  RMSE_Price = tree_rmse_price,
+  MAE_Price = tree_mae_price,
+  R_Squared = tree_r2
+)
+tree_results
+```
+
+```{r, echo=FALSE, include=FALSE}
+# random forest
+library(randomForest)
+
+set.seed(123)
+
+# fit
+rf_model <- randomForest(
+  log_price ~ neighbourhood_simplified + property_type_simplified +
+    room_type + accommodates + bedrooms + minimum_nights +
+    maximum_nights + host_total_listings_count +
+    host_is_superhost + host_identity_verified +
+    instant_bookable + latitude + longitude,
+  data = train_data,
+  ntree = 100,
+  mtry = 4,
+  importance = TRUE
+)
+rf_model
+
+# predict
+rf_pred_log <- predict(rf_model, newdata = test_data)
+rf_pred_price <- exp(rf_pred_log)
+
+# evaluate
+rf_rmse_log <- sqrt(mean((actual_log_price - rf_pred_log)^2))
+rf_mae_log <- mean(abs(actual_log_price - rf_pred_log))
+
+rf_rmse_price <- sqrt(mean((actual_price - rf_pred_price)^2))
+rf_mae_price <- mean(abs(actual_price - rf_pred_price))
+
+rf_r2 <- 1 - sum((actual_log_price - rf_pred_log)^2) /
+  sum((actual_log_price - mean(actual_log_price))^2)
+
+rf_results <- data.frame(
+  Model = "Random Forest",
+  RMSE_Log = rf_rmse_log,
+  MAE_Log = rf_mae_log,
+  RMSE_Price = rf_rmse_price,
+  MAE_Price = rf_mae_price,
+  R_Squared = rf_r2
+)
+rf_results
+```
+
+```{r, echo=FALSE, include=FALSE}
+# actual vs. predicted plots
+
+# linear regression
+lm_pred_df <- data.frame(
+  actual_price = actual_price,
+  predicted_price = lm_pred_price
+)
+
+ggplot(lm_pred_df, aes(x = actual_price, y = predicted_price)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Linear Regression: Actual vs Predicted Airbnb Prices",
+    x = "Actual Price",
+    y = "Predicted Price"
+  )
+
+# regression tree
+tree_pred_df <- data.frame(
+  actual_price = actual_price,
+  predicted_price = tree_pred_price
+)
+
+ggplot(tree_pred_df, aes(x = actual_price, y = predicted_price)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Regression Tree: Actual vs Predicted Airbnb Prices",
+    x = "Actual Price",
+    y = "Predicted Price"
+  )
+
+# random forest
+rf_pred_df <- data.frame(
+  actual_price = actual_price,
+  predicted_price = rf_pred_price
+)
+
+ggplot(rf_pred_df, aes(x = actual_price, y = predicted_price)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Random Forest: Actual vs Predicted Airbnb Prices",
+    x = "Actual Price",
+    y = "Predicted Price"
+  )
+```
+
+## 4.2 Predictive Modeling Results
+
+After the exploratory analysis, I fit three supervised learning models to predict log Airbnb price: multiple linear regression, regression tree, and random forest regression. I used the same training and test split for each model, with 80% of the cleaned data used for training and 20% used for testing. They also used the same response variable, log price, and the same set of predictors.
+
+The linear regression model provided an interpretable baseline. On the test data, the linear regression model had an RMSE of 0.4430 and an MAE of 0.3399 on the log-price scale. When predictions were converted back to the original price scale, the RMSE was about \$77.82 and the MAE was about \$43.72. The test-set (R^2) was 0.5687, meaning that the model explained about 56.9% of the variation in log Airbnb price on the test data.
+
+The regression tree model was less accurate than the linear regression model, but it was still useful for interpretation. The first major split in the tree was based on property type, separating entire-property and hotel-style listings from private-room, shared-room, and other lower-priced property categories. The tree also used neighborhood, bedrooms, accommodates, host listing count, and longitude to split listings into different predicted price groups. On the test data, the regression tree had an RMSE of 0.4747 and an MAE of 0.3659 on the log-price scale. On the original price scale, the tree had an RMSE of about \$84.02 and an MAE of about $47.30. The test-set (R^2) was 0.5048.
+
+The random forest model performed best overall. Random forest regression is more flexible than a single regression tree because it builds many trees and averages their predictions. This allows the model to capture nonlinear relationships and interactions between listing characteristics. On the test data, the random forest had an RMSE of 0.3892 and an MAE of 0.2903 on the log-price scale. On the original price scale, the RMSE was about \$69.88 and the MAE was about \$38.22. The test-set (R^2) was 0.6672, meaning that the random forest explained about 66.7% of the variation in log Airbnb price.
+
+```{r, echo=FALSE}
+model_results <- rbind(lm_results, tree_results, rf_results)
+
+kable(
+  model_results,
+  digits = 4,
+  caption = "Table 2. Model comparison on the test data",
+  col.names = c("Model", "RMSE Log", "MAE Log", "RMSE Price", "MAE Price", "Test R-Squared"))
+```
+
+Table 2 compares the three supervised learning models. The random forest had the lowest RMSE and MAE and the highest test-set (R^2), making it the best predictive model. The random forest reduced the average absolute prediction error to about \$38.22, compared with \$43.72 for the linear regression model and \$47.30 for the regression tree.
+
+Although the random forest had the best predictive accuracy, the other models were still useful. The linear regression model was easier to interpret because its coefficients showed how each predictor was associated with log price while holding other variables constant. The regression tree was useful because it provided a simple rule-based structure for understanding how listings were grouped into different price levels. The random forest was less directly interpretable, but it achieved the strongest prediction performance.
+
+```{r, echo=FALSE}
+rf_pred_df <- data.frame(
+  actual_price = actual_price,
+  predicted_price = rf_pred_price
+  )
+
+ggplot(rf_pred_df,aes(x = actual_price, y = predicted_price)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_equal() +
+  xlim(0, 850) +
+  ylim(0, 850) +
+  labs(
+    title = "Random Forest: Actual vs Predicted Airbnb Prices",
+    x = "Actual Price",
+    y = "Predicted Price" )
+```
+
+The figure above shows the actual versus predicted prices for the random forest model. Points closer to the diagonal line represent more accurate predictions. Many listings fall near the diagonal line, which means that the model captured many of the major pricing patterns in the data. However, the model still had difficulty predicting some of the most expensive listings. This might be due to the fact that high-priced listings may depend on details that were not in the  dataset, such as certain amenities, interior design, nearby attractions, etc.
+
+```{r, echo=FALSE}
+rf_importance_table <- importance(rf_model) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Variable") %>%
+  arrange(desc(`%IncMSE`)) %>%
+  slice_head(n = 10)
+
+kable(
+  rf_importance_table,
+  digits = 2,
+  caption = "Table 3. Top random forest variable importance scores",
+  col.names = c(
+    "Variable",
+    "Percent Increase in MSE",
+    "Increase in Node Purity"
+  )
+)
+```
+
+Table 3 shows the most important predictors in the random forest model based on percent increase in mean squared error. Host total listings count had the highest importance score, followed by latitude, accommodates, neighborhood, bedrooms, and longitude. This shows that both host-related features and location-based features contributed strongly to prediction accuracy. Listing size variables such as accommodates and bedrooms were also important, which supports my previous observation that larger listings usually have higher prices.
+
+Overall, the modeling results support my main findings from the exploratory analysis. Airbnb prices in New York are influenced by a combination of location, listing size, property type, room type, and host characteristics. The random forest model performed best because it was able to capture more complex relationships between these variables than the linear regression model or single regression tree.
+
+# Conclusion and Future Study
+
+In this project, I studied Airbnb pricing patterns in New York using exploratory data analysis and supervised statistical learning methods. The original dataset contained listings from multiple cities, but the final analysis focused only on New York because the raw price values across cities did not appear to be recorded in a common currency. After cleaning and preprocessing the data, the final modeling dataset contained 33,044 listings and 16 variables.
+
+My initial exploratory analysis showed that Airbnb prices in New York are closely related to listing size, room type, property type, and location. Listings with more bedrooms or higher guest capacity generally had higher median prices. Hotel rooms and entire places were much more expensive than private rooms and shared rooms, showing that privacy and full-property access contribute heavily to pricing. Neighborhood differences were also clear, with central or high-demand neighborhoods such as Greenwich Village, Murray Hill, West Village, Theater District, SoHo, Midtown, Chelsea, and Hell’s Kitchen having some of the highest median prices.
+
+The supervised learning results supported these exploratory findings. I compared three models: multiple linear regression, regression tree, and random forest regression. The random forest model performed best, with a test-set (R^2) of 0.6672 and a mean absolute error of about \$38.22 on the original price scale. This means that the model explained about 66.7% of the variation in log Airbnb price and was typically within about \$38 of the actual listing price. The linear regression and regression tree models were less accurate, but they were still useful for interpretation. Across all three models, the most important pricing factors were location, listing size, room type, property type, and host-related characteristics.
+
+The most important discovery I made from this project is that Airbnb price is not determined by one factor alone. Instead, price is influenced by a combination of physical listing characteristics, location-based demand, and host-related features. Larger listings, full-property listings, and listings in central neighborhoods tended to have higher prices. Statistical learning methods can be useful not only for predicting Airbnb prices, but also for understanding the main factors that drive pricing differences across listings.
+
+There are several ways this project could be extended in the future. First, future work could include additional predictive models such as gradient boosting or tuned random forest models to see whether prediction accuracy improves further. Second, amenities could be included more carefully. I did not include the amenities variable in the main models because it is stored as text/list-style information, which would require additional feature engineering to convert amenities into usable predictor variables. In a future study, amenities such as air conditioning, parking, kitchen access, washer and dryer, or workspace could be extracted and added to the model. Third, review scores could also be included if more complete review information were available. In the current dataset, many review score variables had missing values, so including them would have removed a large number of listings or required additional imputation. If more reviews were gathered or missing review information were handled carefully, review scores or review text could help study whether guest satisfaction is related to price. Finally, future analysis could compare New York with other cities after converting all prices into a common currency, which would make cross-city pricing comparisons more meaningful.
+
+Overall, this project shows that Airbnb prices in New York are shaped by a combination of size, privacy, location, and host characteristics. Among the models tested, the random forest provided the strongest prediction performance, while the exploratory analysis and simpler models helped explain why certain listings tend to be more expensive than others.
+
+\newpage
+
+# References
+
+  Ichiba, T. (2026). PSTAT 135: Big Data Analytics lecture notes. University of
+  California, Santa Barbara.
+  
+  https://uc-r.github.io/regression_trees
+  
+  https://www.kaggle.com/datasets/ulrikthygepedersen/airbnb-listings/data
+  
+  https://medium.com/inst414-data-science-tech/predicting-airbnb-stay-prices-using-ridge-regression-9d8bac9e5ec7
+
+# Appendix
+
+The appendix includes the R code used for data cleaning, exploratory data analysis, model fitting, model evaluation, and visualization. The main report hides code for readability, while this appendix provides the full code for reproducibility.
+
+## Explore Data
+
+```{r, echo=TRUE}
+dim(listings)
+names(listings)
+head(listings)
+```
+
+## Clean Data
+
+```{r, echo=TRUE}
+# check missing values by column
+missing_summary <- listings %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "missing_count") %>%
+  arrange(desc(missing_count))
+missing_summary
+
+# convert variables
+airbnb_explore <- listings %>%
+  mutate(
+    # remove symbols if any
+    price = as.numeric(gsub("[$,]", "", price)),
+    # convert rates to percentages
+    host_response_rate = as.numeric(gsub("%", "", host_response_rate)),
+    host_acceptance_rate = as.numeric(gsub("%", "", host_acceptance_rate)),
+    # convert to date if not already
+    host_since = as.Date(host_since),
+    # new column to calculate how many years host has been a host
+    host_years = as.numeric(difftime(Sys.Date(), host_since, units = "days")) / 365,
+    # convert categorical variables to factors
+    city = as.factor(city),
+    neighbourhood = as.factor(neighbourhood),
+    property_type = as.factor(property_type),
+    room_type = as.factor(room_type),
+    # convert yes/no variables to factors
+    host_is_superhost = as.factor(host_is_superhost),
+    host_identity_verified = as.factor(host_identity_verified),
+    host_has_profile_pic = as.factor(host_has_profile_pic),
+    instant_bookable = as.factor(instant_bookable)
+  )
+```
+
+## Price Distribution Exploration
+
+```{r, echo=TRUE}
+# clean price variable (remove symbols if any)
+airbnb_explore <- listings %>%
+  mutate(
+    price = as.numeric(gsub("[$,]", "", price))
+  )
+
+dim(airbnb_explore)
+summary(airbnb_explore$price)
+
+# check price distribution by city
+price_by_city <- airbnb_explore %>%
+  filter(!is.na(price), price > 0) %>%
+  group_by(city) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price),
+    min_price = min(price),
+    max_price = max(price)
+  ) %>%
+  arrange(desc(median_price))
+price_by_city
+
+# plot price distribution by city
+price_by_city %>%
+  ggplot(aes(x = reorder(city, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Median Airbnb Listing Price by City Before Currency Adjustment",
+    x = "City",
+    y = "Median Listed Price"
+  )
+```
+
+The currency does not seem to be standardized, since New York and Paris median prices are much lower than cities like Bangkok, Mexico City, and Istanbul. Since the comparison would be unfair, we can move ahead with analysis of only one city. I choose New York since the currency is easier for me to analyze and I am more familiar with how the different neighbourhoods in New York vastly affect property pricing, so I think it would be interesting to visualize.
+
+## Filter to only New York listings
+
+```{r, echo=TRUE}
+airbnb_ny <- airbnb_explore %>%
+  filter(city == "New York")
+
+dim(airbnb_ny)
+summary(airbnb_ny$price)
+```
+
+# Clean New York listings dataset
+
+```{r, echo=TRUE}
+airbnb_ny_clean <- airbnb_ny %>%
+  mutate(
+    # convert rates to percentages
+    host_response_rate = as.numeric(gsub("%", "", host_response_rate)),
+    host_acceptance_rate = as.numeric(gsub("%", "", host_acceptance_rate)),
+    # convert to date if not already
+    host_since = as.Date(host_since),
+    # new column to calculate how many years host has been a host
+    host_years = as.numeric(difftime(Sys.Date(), host_since, units = "days")) / 365,
+    # convert categorical variables to factors
+    city = as.factor(city),
+    neighbourhood = as.factor(neighbourhood),
+    property_type = as.factor(property_type),
+    room_type = as.factor(room_type),
+    # convert yes/no variables to factors
+    host_is_superhost = as.factor(host_is_superhost),
+    host_has_profile_pic = as.factor(host_has_profile_pic),
+    host_identity_verified = as.factor(host_identity_verified),
+    host_has_profile_pic = as.factor(host_identity_verified),
+    instant_bookable = as.factor(instant_bookable)
+  ) %>%
+  filter(
+    !is.na(price),
+    price >= 10,
+    price <= quantile(price, 0.99, na.rm = TRUE),
+    !is.na(room_type),
+    !is.na(property_type),
+    !is.na(accommodates),
+    !is.na(bedrooms),
+    !is.na(minimum_nights),
+    !is.na(maximum_nights),
+    !is.na(latitude),
+    !is.na(longitude),
+    !is.na(host_total_listings_count)
+  )
+```
+
+The price is heavily skewed to the right, so we can use a log price variable to use for better results when fitting a linear regression model.
+
+## Log-Price Variable
+
+```{r, echo=TRUE}
+airbnb_ny_clean <- airbnb_ny_clean %>%
+  mutate(log_price = log(price))
+
+summary(airbnb_ny_clean$log_price)
+```
+
+## Simplifying Categorical Data
+
+```{r, echo=TRUE}
+# check how many categories each factor has
+airbnb_ny_clean %>%
+  summarise(
+    neighbourhoods = n_distinct(neighbourhood),
+    property_types = n_distinct(property_type),
+    room_types = n_distinct(room_type)
+  )
+
+# explore categories for each factor
+airbnb_ny_clean %>%
+  count(room_type, sort = TRUE)
+
+airbnb_ny_clean %>%
+  count(neighbourhood, sort = TRUE) %>%
+  head(20)
+
+airbnb_ny_clean %>%
+  count(property_type, sort = TRUE) %>%
+  head(15)
+
+# only keep most common property types and neighborhoods
+top_property_types <- airbnb_ny_clean %>%
+  count(property_type, sort = TRUE) %>%
+  slice_head(n = 15) %>%
+  pull(property_type)
+
+top_neighbourhoods <- airbnb_ny_clean %>%
+  count(neighbourhood, sort = TRUE) %>%
+  slice_head(n = 50) %>%
+  pull(neighbourhood)
+
+airbnb_ny_clean <- airbnb_ny_clean %>%
+  mutate(
+    property_type_simplified = ifelse(
+      property_type %in% top_property_types,
+      as.character(property_type),
+      "Other"
+    ),
+    
+    neighbourhood_simplified = ifelse(
+      neighbourhood %in% top_neighbourhoods,
+      as.character(neighbourhood),
+      "Other"
+    ),
+    
+    property_type_simplified = as.factor(property_type_simplified),
+    neighbourhood_simplified = as.factor(neighbourhood_simplified)
+  )
+```
+
+## Final Modeling Data
+
+```{r, echo=TRUE}
+airbnb_ny_final <- airbnb_ny_clean %>%
+  select(
+    price,
+    city,
+    neighbourhood_simplified,
+    property_type_simplified,
+    room_type,
+    accommodates,
+    bedrooms,
+    minimum_nights,
+    maximum_nights,
+    host_total_listings_count,
+    host_is_superhost,
+    host_identity_verified,
+    instant_bookable,
+    latitude,
+    longitude
+  ) %>%
+  drop_na() %>%
+  mutate(
+    log_price = log(price)
+  )
+
+dim(airbnb_ny_final)
+
+summary(airbnb_ny_final$price)
+summary(airbnb_ny_final$log_price)
+```
+
+## EDA and Visualizations
+
+### Pricing Distribution
+
+```{r, echo=TRUE}
+# pricing distribution
+# log pricing distribution
+ggplot(airbnb_ny_final, aes(x = price)) +
+  geom_histogram(bins = 50) +
+  labs(
+    title = "Distribution of Airbnb Listing Prices in New York",
+    x = "Price",
+    y = "Number of Listings"
+  )
+
+# log pricing distribution
+ggplot(airbnb_ny_final, aes(x = log_price)) +
+  geom_histogram(bins = 50) +
+  labs(
+    title = "Distribution of Log Airbnb Listing Prices in New York",
+    x = "Log Price",
+    y = "Number of Listings"
+  )
+```
+
+### Median Price by Room Type and Property Type
+
+```{r, echo=TRUE}
+# room type
+## summary table
+room_type_price <- airbnb_ny_final %>%
+  group_by(room_type) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  arrange(desc(median_price))
+room_type_price
+
+## plot
+room_type_price %>%
+  ggplot(aes(x = reorder(room_type, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Median Airbnb Price by Room Type",
+    x = "Room Type",
+    y = "Median Price"
+  )
+
+# property type
+## summary table
+property_type_price <- airbnb_ny_final %>%
+  group_by(property_type_simplified) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  arrange(desc(median_price))
+property_type_price
+
+## plot
+property_type_price %>%
+  ggplot(aes(x = reorder(property_type_simplified, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Median Airbnb Price by Property Type",
+    x = "Property Type",
+    y = "Median Price"
+  )
+```
+
+### Price vs. Number of Bedrooms
+
+```{r, echo=TRUE}
+## summaey table
+bedrooms_price <- airbnb_ny_final %>%
+  group_by(bedrooms) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  filter(count >= 50)
+bedrooms_price
+
+bedrooms_price %>%
+  ggplot(aes(x = bedrooms, y = median_price)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Median Airbnb Price by Number of Bedrooms",
+    x = "Number of Bedrooms",
+    y = "Median Price"
+  )
+```
+
+### Median Price by Neighbourhoods
+
+```{r, echo=TRUE}
+# top neighbourhoods with most listings
+top_neighbourhood_counts <- airbnb_ny_final %>%
+  count(neighbourhood_simplified, sort = TRUE) %>%
+  filter(neighbourhood_simplified != "Other") %>%
+  head(15)
+
+# median price by neighbourhoods (out of the top neighbourhoods)
+## summary table
+neighbourhood_price <- airbnb_ny_final %>%
+  filter(neighbourhood_simplified != "Other") %>%
+  group_by(neighbourhood_simplified) %>%
+  summarise(
+    count = n(),
+    median_price = median(price),
+    average_price = mean(price)
+  ) %>%
+  filter(count >= 100) %>%
+  arrange(desc(median_price))
+neighbourhood_price %>%
+  head(15)
+
+## plot
+neighbourhood_price %>%
+  head(15) %>%
+  ggplot(aes(x = reorder(neighbourhood_simplified, median_price), y = median_price)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top Neighborhoods by Median Airbnb Price",
+    x = "Neighborhood",
+    y = "Median Price"
+  )
+```
+
+## Modeling
+
+### Split Data into Training and Test Sets
+
+```{r, echo=TRUE}
+set.seed(123)
+
+train_index <- sample(
+  1:nrow(airbnb_ny_final),
+  size = 0.8 * nrow(airbnb_ny_final)
+)
+
+train_data <- airbnb_ny_final[train_index, ]
+test_data <- airbnb_ny_final[-train_index, ]
+
+dim(train_data)
+dim(test_data)
+```
+
+### Linear Regression Model
+
+```{r, echo=TRUE}
+# fit model
+lm_model <- lm(
+  log_price ~ neighbourhood_simplified + property_type_simplified +
+    room_type + accommodates + bedrooms + minimum_nights +
+    maximum_nights + host_total_listings_count +
+    host_is_superhost + host_identity_verified +
+    instant_bookable + latitude + longitude,
+  data = train_data
+)
+summary(lm_model)
+
+# predict on test data
+lm_pred_log <- predict(lm_model, newdata = test_data)
+
+# convert log price back to price
+lm_pred_price <- exp(lm_pred_log)
+actual_price <- test_data$price
+actual_log_price <- test_data$log_price
+
+# evaluation metrics for linear regression model
+lm_rmse_log <- sqrt(mean((actual_log_price - lm_pred_log)^2))
+lm_mae_log <- mean(abs(actual_log_price - lm_pred_log))
+
+lm_rmse_price <- sqrt(mean((actual_price - lm_pred_price)^2))
+lm_mae_price <- mean(abs(actual_price - lm_pred_price))
+
+lm_r2 <- 1 - sum((actual_log_price - lm_pred_log)^2) /
+  sum((actual_log_price - mean(actual_log_price))^2)
+
+lm_results <- data.frame(
+  Model = "Linear Regression",
+  RMSE_Log = lm_rmse_log,
+  MAE_Log = lm_mae_log,
+  RMSE_Price = lm_rmse_price,
+  MAE_Price = lm_mae_price,
+  R_Squared = lm_r2
+)
+lm_results
+```
+
+### Regression Tree
+
+```{r, echo=TRUE}
+library(rpart)
+library(rpart.plot)
+
+tree_model <- rpart(
+  log_price ~ neighbourhood_simplified + property_type_simplified +
+    room_type + accommodates + bedrooms + minimum_nights +
+    maximum_nights + host_total_listings_count +
+    host_is_superhost + host_identity_verified +
+    instant_bookable + latitude + longitude,
+  data = train_data,
+  method = "anova"
+)
+tree_model
+
+# predict
+tree_pred_log <- predict(tree_model, newdata = test_data)
+tree_pred_price <- exp(tree_pred_log)
+
+# evaluate
+tree_rmse_log <- sqrt(mean((actual_log_price - tree_pred_log)^2))
+tree_mae_log <- mean(abs(actual_log_price - tree_pred_log))
+
+tree_rmse_price <- sqrt(mean((actual_price - tree_pred_price)^2))
+tree_mae_price <- mean(abs(actual_price - tree_pred_price))
+
+tree_r2 <- 1 - sum((actual_log_price - tree_pred_log)^2) /
+  sum((actual_log_price - mean(actual_log_price))^2)
+
+tree_results <- data.frame(
+  Model = "Regression Tree",
+  RMSE_Log = tree_rmse_log,
+  MAE_Log = tree_mae_log,
+  RMSE_Price = tree_rmse_price,
+  MAE_Price = tree_mae_price,
+  R_Squared = tree_r2
+)
+tree_results
+```
+
+### Random Forest
+
+```{r, echo=TRUE}
+# random forest
+library(randomForest)
+
+set.seed(123)
+
+# fit
+rf_model <- randomForest(
+  log_price ~ neighbourhood_simplified + property_type_simplified +
+    room_type + accommodates + bedrooms + minimum_nights +
+    maximum_nights + host_total_listings_count +
+    host_is_superhost + host_identity_verified +
+    instant_bookable + latitude + longitude,
+  data = train_data,
+  ntree = 100,
+  mtry = 4,
+  importance = TRUE
+)
+rf_model
+
+# predict
+rf_pred_log <- predict(rf_model, newdata = test_data)
+rf_pred_price <- exp(rf_pred_log)
+
+# evaluate
+rf_rmse_log <- sqrt(mean((actual_log_price - rf_pred_log)^2))
+rf_mae_log <- mean(abs(actual_log_price - rf_pred_log))
+
+rf_rmse_price <- sqrt(mean((actual_price - rf_pred_price)^2))
+rf_mae_price <- mean(abs(actual_price - rf_pred_price))
+
+rf_r2 <- 1 - sum((actual_log_price - rf_pred_log)^2) /
+  sum((actual_log_price - mean(actual_log_price))^2)
+
+rf_results <- data.frame(
+  Model = "Random Forest",
+  RMSE_Log = rf_rmse_log,
+  MAE_Log = rf_mae_log,
+  RMSE_Price = rf_rmse_price,
+  MAE_Price = rf_mae_price,
+  R_Squared = rf_r2
+)
+rf_results
+```
+
+```{r, echo=TRUE}
+# variable importance in random forest model
+rf_model$importance
+```
+
+### Actual vs. Predicted Plots
+
+```{r, echo=TRUE}
+# linear regression
+lm_pred_df <- data.frame(
+  actual_price = actual_price,
+  predicted_price = lm_pred_price
+)
+
+ggplot(lm_pred_df, aes(x = actual_price, y = predicted_price)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Linear Regression: Actual vs Predicted Airbnb Prices",
+    x = "Actual Price",
+    y = "Predicted Price"
+  )
+
+# regression tree
+tree_pred_df <- data.frame(
+  actual_price = actual_price,
+  predicted_price = tree_pred_price
+)
+
+ggplot(tree_pred_df, aes(x = actual_price, y = predicted_price)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Regression Tree: Actual vs Predicted Airbnb Prices",
+    x = "Actual Price",
+    y = "Predicted Price"
+  )
+
+# random forest
+rf_pred_df <- data.frame(
+  actual_price = actual_price,
+  predicted_price = rf_pred_price
+)
+
+ggplot(rf_pred_df, aes(x = actual_price, y = predicted_price)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Random Forest: Actual vs Predicted Airbnb Prices",
+    x = "Actual Price",
+    y = "Predicted Price"
+  )
+```
+
+### Model Comparison
+
+```{r}
+model_results <- rbind(lm_results, tree_results, rf_results)
+model_results
+```
